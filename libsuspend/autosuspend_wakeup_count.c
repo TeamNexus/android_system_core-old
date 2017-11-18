@@ -39,6 +39,7 @@ static int state_fd;
 static int wakeup_count_fd;
 static pthread_t suspend_thread;
 static sem_t suspend_lockout;
+static pthread_mutex_t suspend_lockout_lock;
 static const char *sleep_state = "mem";
 static void (*wakeup_func)(bool success) = NULL;
 
@@ -52,37 +53,40 @@ static void *suspend_thread_func(void *arg __attribute__((unused)))
 
     while (1) {
         usleep(100000);
-        ALOGV("%s: read wakeup_count\n", __func__);
+        ALOGI("%s: read wakeup_count\n", __func__);
         lseek(wakeup_count_fd, 0, SEEK_SET);
         wakeup_count_len = TEMP_FAILURE_RETRY(read(wakeup_count_fd, wakeup_count,
                 sizeof(wakeup_count)));
         if (wakeup_count_len < 0) {
             strerror_r(errno, buf, sizeof(buf));
-            ALOGE("Error reading from %s: %s\n", SYS_POWER_WAKEUP_COUNT, buf);
+            ALOGE("%s: error reading from %s: %s\n", __func__, SYS_POWER_WAKEUP_COUNT, buf);
             wakeup_count_len = 0;
             continue;
         }
         if (!wakeup_count_len) {
-            ALOGE("Empty wakeup count\n");
+            ALOGE("%s: error wakeup count\n", __func__);
             continue;
         }
 
-        ALOGV("%s: wait\n", __func__);
+        // keep the single sem_wait/post()-calls synchronized
+        pthread_mutex_lock(&suspend_lockout_lock);
+
+        ALOGI("%s: wait\n", __func__);
         ret = sem_wait(&suspend_lockout);
         if (ret < 0) {
             strerror_r(errno, buf, sizeof(buf));
-            ALOGE("Error waiting on semaphore: %s\n", buf);
+            ALOGE("%s: error waiting on semaphore: %s\n", __func__, buf);
             continue;
         }
 
         success = true;
-        ALOGV("%s: write %*s to wakeup_count\n", __func__, wakeup_count_len, wakeup_count);
+        ALOGI("%s: write %*s to wakeup_count\n", __func__, wakeup_count_len, wakeup_count);
         ret = TEMP_FAILURE_RETRY(write(wakeup_count_fd, wakeup_count, wakeup_count_len));
         if (ret < 0) {
             strerror_r(errno, buf, sizeof(buf));
-            ALOGE("Error writing to %s: %s\n", SYS_POWER_WAKEUP_COUNT, buf);
+            ALOGE("%s: error writing to %s: %s\n", __func__, SYS_POWER_WAKEUP_COUNT, buf);
         } else {
-            ALOGV("%s: write %s to %s\n", __func__, sleep_state, SYS_POWER_STATE);
+            ALOGI("%s: write %s to %s\n", __func__, sleep_state, SYS_POWER_STATE);
             ret = TEMP_FAILURE_RETRY(write(state_fd, sleep_state, strlen(sleep_state)));
             if (ret < 0) {
                 success = false;
@@ -93,12 +97,14 @@ static void *suspend_thread_func(void *arg __attribute__((unused)))
             }
         }
 
-        ALOGV("%s: release sem\n", __func__);
+        ALOGI("%s: release sem\n", __func__);
         ret = sem_post(&suspend_lockout);
         if (ret < 0) {
             strerror_r(errno, buf, sizeof(buf));
-            ALOGE("Error releasing semaphore: %s\n", buf);
+            ALOGE("%s: error releasing semaphore: %s\n", __func__, buf);
         }
+
+        pthread_mutex_unlock(&suspend_lockout_lock);
     }
     return NULL;
 }
@@ -106,18 +112,38 @@ static void *suspend_thread_func(void *arg __attribute__((unused)))
 static int autosuspend_wakeup_count_enable(void)
 {
     char buf[80];
-    int ret;
+    int ret, val = 0;
 
-    ALOGV("autosuspend_wakeup_count_enable\n");
+    ALOGI("%s: entering\n", __func__);
 
-    ret = sem_post(&suspend_lockout);
+    // keep the single sem_wait/post()-calls synchronized
+    pthread_mutex_lock(&suspend_lockout_lock);
+
+    ret = sem_getvalue(&suspend_lockout, &val);
+    if (ret < 0) {
+        strerror_r(errno, buf, sizeof(buf));
+        ALOGE("%s: error changing semaphore: %s\n", __func__, buf);
+        goto out;
+    }
+    ALOGI("%s: sem_getvalue() ended with ret=%d, val=%d\n", __func__, ret, val);
+
+    // only enable if it is not already enabled
+    if (!val) {
+        ret = sem_post(&suspend_lockout);
+        ALOGI("%s: sem_post() ended with ret=%d, val=%d\n", __func__, ret, val);
+    } else {
+        ALOGI("%s: skipping sem_post() (semaphore already unlocked)\n", __func__);
+    }
 
     if (ret < 0) {
         strerror_r(errno, buf, sizeof(buf));
-        ALOGE("Error changing semaphore: %s\n", buf);
+        ALOGE("%s: error changing semaphore: %s\n", __func__, buf);
     }
 
-    ALOGV("autosuspend_wakeup_count_enable done\n");
+out:
+    pthread_mutex_unlock(&suspend_lockout_lock);
+
+    ALOGI("%s: exiting\n", __func__);
 
     return ret;
 }
@@ -125,18 +151,42 @@ static int autosuspend_wakeup_count_enable(void)
 static int autosuspend_wakeup_count_disable(void)
 {
     char buf[80];
-    int ret;
+    int ret, val = 0;
 
-    ALOGV("autosuspend_wakeup_count_disable\n");
+    ALOGI("%s: entering\n", __func__);
 
-    ret = sem_wait(&suspend_lockout);
+    // keep the single sem_wait/post()-calls synchronized
+    pthread_mutex_lock(&suspend_lockout_lock);
 
-    if (ret < 0) {
-        strerror_r(errno, buf, sizeof(buf));
-        ALOGE("Error changing semaphore: %s\n", buf);
-    }
+    do {
+        ret = sem_getvalue(&suspend_lockout, &val);
+        if (ret < 0) {
+            strerror_r(errno, buf, sizeof(buf));
+            ALOGE("%s: error changing semaphore: %s\n", __func__, buf);
+            goto out;
+        }
+        ALOGI("%s: sem_getvalue() ended with ret=%d, val=%d\n", __func__, ret, val);
 
-    ALOGV("autosuspend_wakeup_count_disable done\n");
+        // check if the next wait-call would lock this threads
+        if (!val) {
+            ALOGI("%s: early-exiting (semaphore already locked)\n", __func__);
+            goto out;
+        }
+
+        ret = sem_wait(&suspend_lockout);
+        val--;
+        if (ret < 0) {
+            strerror_r(errno, buf, sizeof(buf));
+            ALOGE("%s: error changing semaphore: %s\n", __func__, buf);
+            goto out;
+        }
+        ALOGI("%s: sem_wait() ended with ret=%d, val=%d\n", __func__, ret, val);
+    } while (val > 0);
+
+out:
+    pthread_mutex_unlock(&suspend_lockout_lock);
+
+    ALOGI("%s: exiting\n", __func__);
 
     return ret;
 }
@@ -180,6 +230,14 @@ struct autosuspend_ops *autosuspend_wakeup_count_init(void)
         ALOGE("Error creating semaphore: %s\n", buf);
         goto err_sem_init;
     }
+
+    ret = pthread_mutex_init(&suspend_lockout_lock, NULL);
+    if (ret < 0) {
+        strerror_r(errno, buf, sizeof(buf));
+        ALOGE("Error creating mutex: %s\n", buf);
+        goto err_mutex_init;
+    }
+
     ret = pthread_create(&suspend_thread, NULL, suspend_thread_func, NULL);
     if (ret) {
         strerror_r(ret, buf, sizeof(buf));
@@ -191,6 +249,8 @@ struct autosuspend_ops *autosuspend_wakeup_count_init(void)
     return &autosuspend_wakeup_count_ops;
 
 err_pthread_create:
+    pthread_mutex_destroy(&suspend_lockout_lock);
+err_mutex_init:
     sem_destroy(&suspend_lockout);
 err_sem_init:
     close(wakeup_count_fd);
