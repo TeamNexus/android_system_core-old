@@ -9,7 +9,7 @@
 on post-fs-data
     # Initialize log-directory
     mkdir /data/misc/logd/
-    chown logd:log /data/misc/logd/
+    chown logd log /data/misc/logd/
     chmod 0700 /data/misc/logd/
 
     # Start service
