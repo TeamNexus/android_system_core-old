@@ -34,9 +34,11 @@
 
 #define SYS_POWER_STATE "/sys/power/state"
 #define SYS_POWER_WAKEUP_COUNT "/sys/power/wakeup_count"
+#define SYS_KERNEL_POWER_SUSPEND_STATE "/sys/kernel/power_suspend/power_suspend_state"
 
 static int state_fd;
 static int wakeup_count_fd;
+static int power_suspend_state_fd;
 static pthread_t suspend_thread;
 static sem_t suspend_lockout;
 static pthread_mutex_t suspend_lockout_lock;
@@ -119,6 +121,12 @@ static int autosuspend_wakeup_count_enable(void)
     // keep the single sem_wait/post()-calls synchronized
     pthread_mutex_lock(&suspend_lockout_lock);
 
+    ret = write(power_suspend_state_fd, "1", 2);
+    if (ret < 0) {
+        strerror_r(errno, buf, sizeof(buf));
+        ALOGE("%s: error changing powersuspend-state: %s\n", __func__, buf);
+    }
+
     ret = sem_getvalue(&suspend_lockout, &val);
     if (ret < 0) {
         strerror_r(errno, buf, sizeof(buf));
@@ -184,6 +192,13 @@ static int autosuspend_wakeup_count_disable(void)
     } while (val > 0);
 
 out:
+
+    ret = write(power_suspend_state_fd, "0", 2);
+    if (ret < 0) {
+        strerror_r(errno, buf, sizeof(buf));
+        ALOGE("%s: error changing powersuspend-state: %s\n", __func__, buf);
+    }
+
     pthread_mutex_unlock(&suspend_lockout_lock);
 
     ALOGD("%s: exiting\n", __func__);
@@ -224,6 +239,13 @@ struct autosuspend_ops *autosuspend_wakeup_count_init(void)
         goto err_open_wakeup_count;
     }
 
+    power_suspend_state_fd = TEMP_FAILURE_RETRY(open(SYS_KERNEL_POWER_SUSPEND_STATE, O_RDWR));
+    if (power_suspend_state_fd < 0) {
+        strerror_r(errno, buf, sizeof(buf));
+        ALOGE("Error opening %s: %s\n", SYS_KERNEL_POWER_SUSPEND_STATE, buf);
+        goto err_open_power_suspend_state;
+    }
+
     ret = sem_init(&suspend_lockout, 0, 0);
     if (ret < 0) {
         strerror_r(errno, buf, sizeof(buf));
@@ -253,6 +275,8 @@ err_pthread_create:
 err_mutex_init:
     sem_destroy(&suspend_lockout);
 err_sem_init:
+    close(power_suspend_state_fd);
+err_open_power_suspend_state:
     close(wakeup_count_fd);
 err_open_wakeup_count:
     close(state_fd);
