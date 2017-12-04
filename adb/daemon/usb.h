@@ -34,8 +34,10 @@ struct usb_handle {
     void (*kick)(usb_handle* h);
     void (*close)(usb_handle* h);
 
+#ifdef LEGACY_ADB_INTERFACE
     // Legacy f_adb
     int fd = -1;
+#endif
 
     // FunctionFS
     int control = -1;
