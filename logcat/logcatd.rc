@@ -13,7 +13,7 @@ on post-fs-data
     chmod 0700 /data/misc/logd/
 
     # Start service
-    # start logcatd
+    start logcatd
 
 # logcatd service
 service logcatd /system/bin/logcatd -L -b ${logd.logpersistd.buffer:-all} -v threadtime -v usec -v printable -D -f /data/misc/logd/logcat -r ${logd.logpersistd.size:-1024} -n ${logd.logpersistd.size.rotate:-64} --id=${ro.build.id}
