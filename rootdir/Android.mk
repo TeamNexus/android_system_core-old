@@ -71,6 +71,7 @@ SANITIZE_ASAN_OPTIONS_FOR := \
   keystore \
   lmkd \
   logcat \
+  logcatd \
   logd \
   lowi-server \
   media.codec \
