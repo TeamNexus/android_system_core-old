@@ -1,4 +1,5 @@
 service logd /system/bin/logd
+    class core
     socket logd stream 0666 logd logd
     socket logdr seqpacket 0666 logd logd
     socket logdw dgram+passcred 0222 logd logd
