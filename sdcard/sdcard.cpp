@@ -432,7 +432,7 @@ extern "C" int sdcard_main(int argc, char **argv) {
     int fs_version;
 
     int opt;
-    while ((opt = getopt(argc, argv, "u:g:U:mw")) != -1) {
+    while ((opt = getopt(argc, argv, "u:g:U:mwG")) != -1) {
         switch (opt) {
             case 'u':
                 uid = strtoul(optarg, NULL, 10);
@@ -449,6 +449,9 @@ extern "C" int sdcard_main(int argc, char **argv) {
             case 'w':
                 full_write = true;
                 break;
+			case 'G':
+				// ignored
+				break;
             case '?':
             default:
                 return usage();
