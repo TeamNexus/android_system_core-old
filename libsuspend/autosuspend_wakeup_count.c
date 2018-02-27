@@ -15,7 +15,7 @@
  */
 
 #define LOG_TAG "libsuspend"
-//#define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
 
 #include <errno.h>
 #include <fcntl.h>
@@ -98,6 +98,7 @@ static void *suspend_thread_func(void *arg __attribute__((unused)))
         } else {
             ALOGV("%s: write %s to %s\n", __func__, sleep_state, SYS_POWER_STATE);
             ret = TEMP_FAILURE_RETRY(write(state_fd, sleep_state, strlen(sleep_state)));
+            ALOGV("%s: write returned with %d (%s)\n", __func__, -ret, strerror(-ret));
             if (ret >= 0) {
                 success = true;
             }
